@@ -179,10 +179,10 @@ public final class Finder {
                             score = -1000;
                             doc = null;
                         } else {
-                            doc = SaveText.parse(text);
+                            doc = SaveText.parse(text, logical);
                         }
                     } else {
-                        doc = SaveText.parseBytes(bytes);
+                        doc = SaveText.parseBytes(bytes, logical);
                         if (doc != null && doc.encrypted) score = -50;
                     }
                     if (doc != null && score != -1000) {

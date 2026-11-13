@@ -17,6 +17,9 @@ import {
   shannonEntropy,
   tokensOf,
   withOverrides,
+  fieldLabel,
+  friendlyFileKey,
+  relaxJson,
 } from "./engine.ts";
 
 const STAMP = {
@@ -411,5 +414,147 @@ describe("wider currency detection", () => {
     const loaded = parseBytes("localstorage.db", new Uint8Array(header));
     assert.equal(loaded.writable, false);
     assert.ok(loaded.warnings?.some((w) => /sqlite|cocos/i.test(w)));
+  });
+});
+
+
+describe("real-save formats and friendly labels", () => {
+  it("parses Easy Save 3 files with unquoted dictionary keys", () => {
+    const es3 = `{
+	"PlayerInfo" : {
+		"__type" : "GameProject.Scripts.PuzzleGame.Manager.PlayerInfo,Game",
+		"value" : {
+		"TotalCoins" : 150,
+		"TotalDiamond" : 20,
+		"LevelId" : 2
+	}
+	},
+	"MovieManager" : {
+		"__type" : "Movie",
+		"value" : {
+		"WatchCounts" : {100001:44,100002:8}
+		}
+	},
+}`;
+    const loaded = parseText("GameSave", es3);
+    const { leaves } = collect(loaded.data);
+    const money = leaves.filter((l) => l.role === "money");
+    assert.equal(money.find((l) => l.key === "TotalCoins")?.value, 150);
+    assert.equal(money.find((l) => l.key === "TotalDiamond")?.value, 20);
+    assert.equal(fieldLabel(money.find((l) => l.key === "TotalCoins")!), "Coins");
+    assert.equal(fieldLabel(money.find((l) => l.key === "TotalDiamond")!), "Diamonds");
+    assert.ok(relaxJson(es3));
+  });
+
+  it("uses a decoded filename as the key for a wrapped bare number", () => {
+    const loaded = parseText("files/VQBzAGUAcgBEAGEAdABhAF8AQgBpAGcAQwBvAGkAbgA=", "MgAwADAAMAAwADAAMAAwADAA");
+    assert.equal(loaded.wrap, "b64-utf16");
+    assert.equal(friendlyFileKey("files/VQBzAGUAcgBEAGEAdABhAF8AQgBpAGcAQwBvAGkAbgA="), "UserData_BigCoin");
+    const { leaves } = collect(loaded.data);
+    assert.equal(leaves[0]?.key, "UserData_BigCoin");
+    assert.equal(leaves[0]?.role, "money");
+    assert.equal(fieldLabel(leaves[0]!), "Big Coins");
+  });
+
+  it("finds coins, flowers, and boosters from anonymized real-save shapes", () => {
+    const pixel = parseText(
+      "PixelShooter_GameData.json",
+      JSON.stringify({
+        curCoin: 220,
+        curLanguage: 1,
+        curBrush: 4,
+        ShufferPropCount: 5,
+        BoomPropCount: 5,
+        TipPropCount: 5,
+        shopCoinGetAwardCount: 0,
+      }),
+    );
+    const pixelMoney = collect(pixel.data).leaves.filter((l) => l.role === "money");
+    assert.deepEqual(
+      pixelMoney.map((l) => [l.key, l.value, fieldLabel(l)]).sort(),
+      [
+        ["BoomPropCount", 5, "Boosters: Bomb"],
+        ["ShufferPropCount", 5, "Boosters: Shuffle"],
+        ["TipPropCount", 5, "Boosters: Tip"],
+        ["curBrush", 4, "Boosters: Brush"],
+        ["curCoin", 220, "Coins"],
+      ],
+    );
+    assert.ok(!pixelMoney.some((l) => l.key === "curLanguage" || l.key === "shopCoinGetAwardCount"));
+
+    const idle = parseText(
+      "save.json",
+      JSON.stringify({
+        saveObjects: [{ key: "UserProfile", json: JSON.stringify({ coins: 1666, flowers: 31, freeHeartCount: 0 }) }],
+      }),
+    );
+    const idleMoney = collect(idle.data).leaves.filter((l) => l.role === "money");
+    assert.equal(idleMoney.find((l) => l.key === "coins")?.value, 1666);
+    assert.equal(fieldLabel(idleMoney.find((l) => l.key === "coins")!), "Coins");
+    assert.equal(idleMoney.find((l) => l.key === "flowers")?.value, 31);
+    assert.equal(fieldLabel(idleMoney.find((l) => l.key === "flowers")!), "Flowers");
+
+    const inventory = parseText(
+      "InventoryData.sav",
+      JSON.stringify({
+        Items: {
+          Life: { Key: "Life", Amount: 5 },
+          Coin: { Key: "Coin", Amount: 625 },
+          Shuffle: { Key: "Shuffle", Amount: 2 },
+        },
+      }),
+    );
+    const inv = collect(inventory.data).leaves.filter((l) => l.role === "money");
+    assert.equal(fieldLabel(inv.find((l) => l.path === "Items.Coin.Amount")!), "Coins");
+    assert.equal(fieldLabel(inv.find((l) => l.path === "Items.Life.Amount")!), "Lives");
+    assert.equal(fieldLabel(inv.find((l) => l.path === "Items.Shuffle.Amount")!), "Boosters: Shuffle");
+
+    const priced = parseText(
+      "save.es3",
+      JSON.stringify({
+        Money: { __type: "int", value: 500 },
+        UnlockObject_Price: { __type: "int", value: 1000 },
+        CoinAdCount: 3,
+      }),
+    );
+    const pricedMoney = collect(priced.data).leaves.filter((l) => l.role === "money").map((l) => l.key);
+    assert.ok(pricedMoney.includes("Money") || pricedMoney.includes("value"));
+    assert.ok(!collect(priced.data).leaves.some((l) => l.role === "money" && l.path.toLowerCase().includes("price")));
+    assert.ok(!collect(priced.data).leaves.some((l) => l.role === "money" && l.key === "CoinAdCount"));
+
+    const hashed = parseText("prefs.json", JSON.stringify({ coins_h12345: 40 }));
+    assert.equal(collect(hashed.data).leaves.find((l) => l.role === "money" && l.key === "coins_h12345")?.value, 40);
+    assert.equal(
+      fieldLabel(collect(hashed.data).leaves.find((l) => l.key === "coins_h12345")!),
+      "Coins",
+    );
+
+    const low = collect(parseText("x.json", JSON.stringify({ day: 3 })).data).leaves.find((l) => l.key === "day")!;
+    assert.match(fieldLabel(low), /\(unsure\)$/);
+  });
+
+  it("reads wallet JSON from a SQLite-like blob and skips other players' coins", () => {
+    const json = JSON.stringify({
+      wallet: [
+        { guid: "aaa", value: 6649 },
+        { guid: "bbb", value: 1916 },
+      ],
+    });
+    const prefix = "walletUserData";
+    const raw = Buffer.concat([
+      Buffer.from("SQLite format 3\0"),
+      Buffer.from("junk"),
+      Buffer.from(prefix),
+      Buffer.from(json),
+      Buffer.from("leaderBoardMembersData"),
+      Buffer.from(JSON.stringify({ members: [{ collectedCoins: 4768 }] })),
+    ]);
+    const loaded = parseBytes("UserData.db", new Uint8Array(raw));
+    const { leaves } = collect(loaded.data);
+    const money = leaves.filter((l) => l.role === "money");
+    assert.ok(money.some((l) => l.value === 6649));
+    assert.ok(money.some((l) => l.value === 1916));
+    assert.ok(!money.some((l) => l.value === 4768));
+    assert.ok(money.some((l) => fieldLabel(l) === "Wallet" || /wallet/i.test(l.path)));
   });
 });

@@ -31,13 +31,16 @@ public final class SaveText {
             "purse", "treasury", "ingot", "ingots", "ore", "ores", "mineral", "minerals");
     private static final Set<String> MONEY_SOFT = set(
             "star", "stars", "ticket", "tickets", "key", "keys", "heart", "hearts",
-            "life", "lives", "energy", "stamina", "point", "points", "score", "sc", "hc", "cur");
+            "life", "lives", "energy", "stamina", "point", "points", "score", "sc", "hc",
+            "flower", "flowers", "hint", "undo", "refresh", "shuffle", "shuffer", "brush",
+            "boom", "bomb", "hammer", "wand", "magnet", "cannon", "tip", "booster", "boosters");
     private static final Set<String> MONEY_PARENT = set(
             "wallet", "purse", "bank", "currency", "currencies", "money", "cash", "coins", "coin",
             "gold", "gems", "gem", "credits", "credit", "treasury", "funds", "tickets", "keys",
             "stars", "hearts", "lives", "energy", "stamina", "points", "savings", "premium",
             "crystal", "crystals", "diamond", "diamonds", "token", "tokens", "balance",
-            "softcurrency", "hardcurrency");
+            "softcurrency", "hardcurrency", "flower", "flowers", "hint", "undo", "refresh",
+            "shuffle", "brush", "booster", "boosters", "inventory", "items");
     private static final Set<String> AMOUNT = set(
             "amount", "value", "count", "qty", "quantity", "bal", "balance", "total", "num", "number");
     private static final Set<String> QUALIFIER = set(
@@ -60,7 +63,7 @@ public final class SaveText {
             "initial", "default", "base", "start", "starting",
             "duration", "interval", "cooldown", "delay", "expiry", "expire", "ttl",
             "to", "from", "add", "added", "plus", "delta", "diff", "change", "gain", "gained",
-            "high");
+            "high", "adcount", "impression", "impressions", "operation", "operations");
     private static final Set<String> UNLOCK_ON = set(
             "unlocked", "owned", "purchased", "bought", "available", "opened", "complete", "completed");
     private static final Set<String> UNLOCK_OFF = set("locked", "sealed");
@@ -212,12 +215,18 @@ public final class SaveText {
     }
 
     public static Doc parse(String text) {
+        return parse(text, null);
+    }
+
+    public static Doc parse(String text, String fileName) {
         if (text == null) return null;
         String trimmed = stripBom(text).trim();
         if (trimmed.matches("-?\\d+")) {
             int start = text.indexOf(trimmed);
+            if (start < 0) start = 0;
             List<Field> fields = new ArrayList<Field>();
-            fields.add(makeField("coin", "coin", "", trimmed, start, start + trimmed.length()));
+            String key = friendlyFileKey(fileName);
+            fields.add(makeField(key, key, "", trimmed, start, start + trimmed.length()));
             applyWarnings(fields);
             return new Doc("number", text, fields);
         }
@@ -250,7 +259,9 @@ public final class SaveText {
     public static boolean analytics(String name, String text) {
         String lower = name == null ? "" : name.toLowerCase(Locale.US);
         if (lower.contains("session_data") || lower.contains("firebase") || lower.contains("crashlytics")
-                || lower.contains("appsflyer") || lower.contains("analytics") || lower.contains("adjust")) {
+                || lower.contains("appsflyer") || lower.contains("analytics") || lower.contains("adjust")
+                || lower.contains("blackboard") || lower.contains("voodoolive") || lower.contains("remoteconfig")
+                || lower.contains("device_info") || lower.contains("tracks.xml")) {
             return true;
         }
         if (text != null && text.contains("gaSessionId") && interest(parse(text)) == 0) return true;
@@ -340,7 +351,9 @@ public final class SaveText {
     static Classified classify(String key, String parent, String literal) {
         List<String> tokenList = tokens(key);
         List<String> parentTokens = tokens(parent);
-        boolean rejected = contains(tokenList, REJECT);
+        boolean rejected = contains(tokenList, REJECT)
+                || parentHasPrice(parentTokens)
+                || key.replaceAll("[^A-Za-z0-9]", "").toLowerCase(Locale.US).endsWith("adcount");
         boolean numeric = asNumber(literal) != null;
         if (numeric && !rejected) {
             Double value = asNumber(literal);
@@ -745,6 +758,11 @@ public final class SaveText {
             return ok && i >= text.length();
         }
 
+        boolean parseOne() {
+            value("", "", "");
+            return ok;
+        }
+
         void value(String path, String key, String parent) {
             if (!ok) return;
             skip();
@@ -772,11 +790,20 @@ public final class SaveText {
             }
             while (ok) {
                 skip();
-                if (i >= text.length() || text.charAt(i) != '"') {
+                if (i >= text.length()) {
                     ok = false;
                     return;
                 }
-                String key = string();
+                String key;
+                if (text.charAt(i) == '"') key = string();
+                else if (Character.isLetterOrDigit(text.charAt(i)) || text.charAt(i) == '_') {
+                    int s = i;
+                    while (i < text.length() && (Character.isLetterOrDigit(text.charAt(i)) || text.charAt(i) == '_')) i++;
+                    key = text.substring(s, i);
+                } else {
+                    ok = false;
+                    return;
+                }
                 if (!ok) return;
                 keys.add(key);
                 skip();
@@ -793,6 +820,11 @@ public final class SaveText {
                 }
                 if (!eat(',')) {
                     ok = false;
+                    return;
+                }
+                skip();
+                if (eat('}')) {
+                    markSiblings(path, keys);
                     return;
                 }
             }
@@ -943,11 +975,16 @@ public final class SaveText {
 
     static List<String> tokens(String key) {
         String spaced = key.replaceAll("([a-z0-9])([A-Z])", "$1 $2")
-                .replaceAll("([A-Z]+)([A-Z][a-z])", "$1 $2");
+                .replaceAll("([A-Z]+)([A-Z][a-z])", "$1 $2")
+                .replaceAll("_h[0-9a-fA-F]+$", "");
         String[] parts = spaced.split("[^A-Za-z0-9]+");
         List<String> out = new ArrayList<String>();
         for (String part : parts) {
-            if (!part.isEmpty()) out.add(part.toLowerCase(Locale.US));
+            if (part.isEmpty()) continue;
+            String lower = part.toLowerCase(Locale.US);
+            if ("cion".equals(lower)) lower = "coin";
+            if ("shuffer".equals(lower)) lower = "shuffle";
+            out.add(lower);
         }
         return out;
     }
@@ -955,6 +992,133 @@ public final class SaveText {
     private static boolean contains(List<String> tokenList, Set<String> words) {
         for (String token : tokenList) if (words.contains(token)) return true;
         return false;
+    }
+
+    private static boolean parentHasPrice(List<String> parentTokens) {
+        for (String token : parentTokens) {
+            if (token.equals("cost") || token.equals("price") || token.equals("fee")
+                    || token.equals("reward") || token.equals("rewards") || token.equals("rewarded")
+                    || token.equals("payout")) return true;
+        }
+        return false;
+    }
+
+    public static String fieldLabel(Field field) {
+        if (field == null) return "";
+        String known = labelFor(field.key);
+        if (known == null && AMOUNT.contains(field.key.toLowerCase(Locale.US))) {
+            String parent = parentName(field.path);
+            known = labelFor(parent);
+            if (known == null && parent.length() > 0) known = titleTokens(tokens(parent));
+        }
+        if (known == null) {
+            String titled = titleTokens(tokens(field.key));
+            known = titled.isEmpty() ? field.key : titled;
+        }
+        boolean sure = ("money".equals(field.role) && field.confidence >= 70)
+                || "unlock".equals(field.role) || "upgrade".equals(field.role);
+        boolean knownKey = labelFor(field.key) != null
+                || (AMOUNT.contains(field.key.toLowerCase(Locale.US)) && labelFor(parentName(field.path)) != null);
+        if (!sure || !knownKey) return known + " (unsure)";
+        return known;
+    }
+
+    private static String parentName(String path) {
+        if (path == null) return "";
+        String[] parts = path.split("[.\\[\\]]+");
+        if (parts.length < 2) return "";
+        return parts[parts.length - 2];
+    }
+
+    private static String titleTokens(List<String> parts) {
+        StringBuilder out = new StringBuilder();
+        for (String part : parts) {
+            if (part.isEmpty() || part.matches("\\d+")) continue;
+            if (out.length() > 0) out.append(' ');
+            out.append(Character.toUpperCase(part.charAt(0)));
+            if (part.length() > 1) out.append(part.substring(1));
+        }
+        return out.toString();
+    }
+
+    private static String labelFor(String raw) {
+        if (raw == null || raw.isEmpty()) return null;
+        String compact = "";
+        for (String token : tokens(raw)) compact += token;
+        if ("coin".equals(compact) || "coins".equals(compact) || "curcoin".equals(compact) || "totalcoins".equals(compact)) return "Coins";
+        if ("roundcoin".equals(compact)) return "Round Cash";
+        if ("bigcoin".equals(compact) || "userdata_bigcoin".equals(compact) || "userdata_bigcoin".equals(raw.toLowerCase(Locale.US))) return "Big Coins";
+        if (raw.toLowerCase(Locale.US).contains("bigcoin")) return "Big Coins";
+        if ("gem".equals(compact) || "gems".equals(compact)) return "Gems";
+        if ("diamond".equals(compact) || "diamonds".equals(compact) || "totaldiamond".equals(compact)) return "Diamonds";
+        if ("gold".equals(compact)) return "Gold";
+        if ("cash".equals(compact)) return "Cash";
+        if ("money".equals(compact)) return "Money";
+        if ("pigmoney".equals(compact)) return "Piggy Bank";
+        if ("energy".equals(compact)) return "Energy";
+        if ("stamina".equals(compact)) return "Stamina";
+        if ("life".equals(compact) || "lives".equals(compact)) return "Lives";
+        if ("heart".equals(compact) || "hearts".equals(compact)) return "Hearts";
+        if ("key".equals(compact) || "keys".equals(compact)) return "Keys";
+        if ("star".equals(compact) || "stars".equals(compact)) return "Stars";
+        if ("ticket".equals(compact) || "tickets".equals(compact)) return "Tickets";
+        if ("token".equals(compact) || "tokens".equals(compact)) return "Tokens";
+        if ("flower".equals(compact) || "flowers".equals(compact)) return "Flowers";
+        if ("crystal".equals(compact) || "crystals".equals(compact)) return "Crystals";
+        if (compact.contains("hint") && compact.contains("prop") || compact.equals("hint")) return "Boosters: Hint";
+        if (compact.equals("undo") || compact.equals("undoprop")) return "Boosters: Undo";
+        if (compact.equals("refresh") || compact.equals("refreshprop")) return "Boosters: Refresh";
+        if (compact.contains("shuffle") || compact.contains("shuffer")) return "Boosters: Shuffle";
+        if (compact.contains("brush")) return "Boosters: Brush";
+        if (compact.contains("boom") || compact.equals("bomb")) return "Boosters: Bomb";
+        if (compact.equals("tip") || compact.contains("tipprop")) return "Boosters: Tip";
+        if (compact.equals("hammer")) return "Boosters: Hammer";
+        if (compact.equals("wand")) return "Boosters: Wand";
+        if (compact.equals("magnet")) return "Boosters: Magnet";
+        if (compact.equals("cannon")) return "Boosters: Cannon";
+        if ("offlinecoins".equals(compact)) return "Offline Coins";
+        if ("dailycoins".equals(compact)) return "Daily Coins";
+        for (String token : tokens(raw)) {
+            String one = labelForToken(token);
+            if (one != null) return one;
+        }
+        return null;
+    }
+
+    private static String labelForToken(String token) {
+        if ("coin".equals(token) || "coins".equals(token)) return "Coins";
+        if ("gem".equals(token) || "gems".equals(token)) return "Gems";
+        if ("diamond".equals(token) || "diamonds".equals(token)) return "Diamonds";
+        if ("gold".equals(token)) return "Gold";
+        if ("cash".equals(token)) return "Cash";
+        if ("money".equals(token)) return "Money";
+        if ("energy".equals(token)) return "Energy";
+        if ("life".equals(token) || "lives".equals(token)) return "Lives";
+        if ("heart".equals(token) || "hearts".equals(token)) return "Hearts";
+        if ("key".equals(token) || "keys".equals(token)) return "Keys";
+        if ("flower".equals(token) || "flowers".equals(token)) return "Flowers";
+        if ("hint".equals(token)) return "Boosters: Hint";
+        if ("undo".equals(token)) return "Boosters: Undo";
+        if ("shuffle".equals(token)) return "Boosters: Shuffle";
+        if ("brush".equals(token)) return "Boosters: Brush";
+        return null;
+    }
+
+    public static String friendlyFileKey(String name) {
+        if (name == null || name.isEmpty()) return "value";
+        String base = name;
+        int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+        if (slash >= 0) base = name.substring(slash + 1);
+        base = base.replaceAll("(?i)\\.(es3|json|txt|sav|dat|bak|bac|xml|db|pref|prefs)$", "");
+        try {
+            byte[] bytes = java.util.Base64.getDecoder().decode(base);
+            if (bytes.length >= 2 && bytes.length % 2 == 0) {
+                String utf16 = new String(bytes, StandardCharsets.UTF_16LE).replace("\0", "").trim();
+                if (utf16.matches("[A-Za-z][A-Za-z0-9_ ]{1,80}")) return utf16.replace(' ', '_');
+            }
+        } catch (IllegalArgumentException ignored) {
+        }
+        return base.isEmpty() ? "value" : base;
     }
 
     private static Double asNumber(String literal) {
@@ -1078,7 +1242,9 @@ public final class SaveText {
                     for (int off : offsets) {
                         if (seen.contains(off)) continue;
                         int le = readInt32LE(bytes, off);
-                        if (le < 0 || le > 1_000_000_000) continue;
+                        boolean coreWord = MONEY_CORE.contains(word);
+                        int cap = coreWord ? 200_000_000 : 10_000_000;
+                        if (le < 0 || le > cap) continue;
                         if (le > 0 && le == bytes.length - off - 4 && le > 4096) continue;
                         seen.add(off);
                         String path = word;
@@ -1128,7 +1294,19 @@ public final class SaveText {
     }
 
     public static Doc parseBytes(byte[] bytes) {
+        return parseBytes(bytes, null);
+    }
+
+    public static Doc parseBytes(byte[] bytes, String fileName) {
         if (bytes == null) return null;
+        if (fileName != null) {
+            String lower = fileName.toLowerCase(Locale.US);
+            if (lower.endsWith(".db-wal") || lower.endsWith(".db-shm")) {
+                return new Doc("binary", "", new ArrayList<Field>(), new ArrayList<Blob>(),
+                        "This is a SQLite sidecar file. Open the main .db save instead.",
+                        false, false, bytes);
+            }
+        }
         if (isSqlite(bytes)) {
             String warning = "This looks like a SQLite or Cocos local-storage file. Currency keys are listed when they can be read, but Savepress won't rewrite the database.";
             List<Field> fields = extractSqlite(bytes);
@@ -1139,7 +1317,7 @@ public final class SaveText {
         if (!encrypted) {
             String asText = decodeBest(bytes);
             if (mostlyText(asText)) {
-                Doc doc = parse(asText);
+                Doc doc = parse(asText, fileName);
                 if (doc != null) {
                     return new Doc(doc.format, asText, doc.fields, doc.blobs, doc.warning, true, false, bytes);
                 }
@@ -1164,17 +1342,57 @@ public final class SaveText {
                 false, encrypted, bytes);
     }
 
+    private static String precedingId(String text, int start) {
+        int from = Math.max(0, start - 120);
+        String window = text.substring(from, start);
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("[A-Za-z][A-Za-z0-9_]{2,60}").matcher(window);
+        String last = "";
+        while (matcher.find()) last = matcher.group();
+        return last;
+    }
+
     private static List<Field> extractSqlite(byte[] bytes) {
         List<Field> fields = new ArrayList<Field>();
         String text = new String(bytes, StandardCharsets.ISO_8859_1);
+        Set<String> seen = new HashSet<String>();
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) != '{') continue;
+            List<Field> found = new ArrayList<Field>();
+            List<Blob> blobs = new ArrayList<Blob>();
+            Parser parser = new Parser(text.substring(i), found, blobs);
+            if (!parser.parseOne() || parser.i < 20) continue;
+            String prefix = precedingId(text, i);
+            String compact = prefix.toLowerCase(Locale.US);
+            if (compact.contains("leaderboardmembers") || compact.contains("leaderboardmembersdata")) {
+                i += Math.max(parser.i - 1, 0);
+                continue;
+            }
+            boolean any = false;
+            for (Field field : found) {
+                if (!"money".equals(field.role)) continue;
+                if (field.path.toLowerCase(Locale.US).contains("members")) continue;
+                String path = prefix.isEmpty() ? field.path : prefix + "." + field.path;
+                if (!seen.add(path)) continue;
+                Field copy = new Field(path, field.key, field.role, field.lockOff, field.literal, field.start, field.end);
+                copy.confidence = field.confidence;
+                copy.warning = field.warning;
+                copy.valueType = field.valueType;
+                fields.add(copy);
+                any = true;
+            }
+            if (any) i += Math.max(parser.i - 1, 0);
+        }
+        if (!fields.isEmpty()) return fields;
         java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("[A-Za-z_][A-Za-z0-9_.]{1,40}|-?\\d{1,15}(?:\\.\\d+)?").matcher(text);
         List<String> runs = new ArrayList<String>();
         while (matcher.find()) runs.add(matcher.group());
         for (int i = 0; i < runs.size(); i++) {
             String run = runs.get(i);
             if (run.length() > 0 && (run.charAt(0) == '-' || Character.isDigit(run.charAt(0)))) continue;
-            int conf = moneyConfidence(tokens(run), new ArrayList<String>(), 1);
-            if (conf == 0) continue;
+            List<String> tokenList = tokens(run);
+            if (tokenList.size() == 1 && "key".equals(tokenList.get(0))) continue;
+            int conf = moneyConfidence(tokenList, new ArrayList<String>(), 1);
+            if (conf < 80) continue;
             for (int j = i + 1; j < Math.min(i + 6, runs.size()); j++) {
                 String next = runs.get(j);
                 if (!next.matches("-?\\d+(\\.\\d+)?")) continue;
@@ -1187,8 +1405,7 @@ public final class SaveText {
                         break;
                     }
                 }
-                Field field = makeField(path, run, "", next, 0, 0);
-                fields.add(field);
+                fields.add(makeField(path, run, "", next, 0, 0));
                 break;
             }
         }

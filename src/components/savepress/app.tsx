@@ -14,6 +14,7 @@ import {
 import {
   collect,
   confidenceLabel,
+  fieldLabel,
   countRoles,
   parseBytes,
   parseText,
@@ -957,6 +958,7 @@ function Editor({
     return (
       leaf.path.toLowerCase().includes(needle) ||
       leaf.key.toLowerCase().includes(needle) ||
+      fieldLabel(leaf).toLowerCase().includes(needle) ||
       ROLE_LABEL[leaf.role].toLowerCase().includes(needle)
     );
   });
@@ -1195,8 +1197,8 @@ function FieldGroups({
                 return (
                   <li key={leaf.path} className="flex items-center gap-3 py-3">
                     <div className="min-w-0 flex-1">
-                      <div className="truncate font-medium">{leaf.key}</div>
-                      <div className="truncate text-sm text-muted">{leaf.path}</div>
+                      <div className="truncate font-medium">{fieldLabel(leaf)}</div>
+                      <div className="truncate text-sm text-muted">{leaf.key} · {leaf.path}</div>
                       {leaf.role === "money" && leaf.confidence > 0 && (
                         <div className="text-sm text-muted">{confidenceLabel(leaf.confidence)}</div>
                       )}
@@ -1385,12 +1387,7 @@ function Toggle({
 }
 
 function fieldName(leaf: Leaf): string {
-  const parts = leaf.path.split(".");
-  const key = parts[parts.length - 1] ?? leaf.key;
-  if (parts.length >= 2 && /^(level|lvl|unlocked|locked|stars?)$/i.test(key)) {
-    return parts[parts.length - 2] ?? leaf.key;
-  }
-  return leaf.key;
+  return fieldLabel(leaf);
 }
 
 function formatValue(value: number | boolean): string {

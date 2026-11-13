@@ -175,7 +175,23 @@ const MONEY_SOFT = new Set([
   "score",
   "sc",
   "hc",
-  "cur",
+  "flower",
+  "flowers",
+  "hint",
+  "undo",
+  "refresh",
+  "shuffle",
+  "shuffer",
+  "brush",
+  "boom",
+  "bomb",
+  "hammer",
+  "wand",
+  "magnet",
+  "cannon",
+  "tip",
+  "booster",
+  "boosters",
 ]);
 
 const MONEY_PARENT = new Set([
@@ -189,6 +205,17 @@ const MONEY_PARENT = new Set([
   "energy",
   "stamina",
   "points",
+  "flower",
+  "flowers",
+  "hint",
+  "undo",
+  "refresh",
+  "shuffle",
+  "brush",
+  "booster",
+  "boosters",
+  "inventory",
+  "items",
 ]);
 
 const AMOUNT = new Set([
@@ -324,6 +351,11 @@ const REJECT = new Set([
   "gain",
   "gained",
   "high",
+  "adcount",
+  "impression",
+  "impressions",
+  "operation",
+  "operations",
 ]);
 
 const UNLOCK_ON = new Set([
@@ -419,8 +451,10 @@ export function tokensOf(key: string): string[] {
   return key
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
     .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/_h[0-9a-fA-F]+$/g, "")
     .split(/[^A-Za-z0-9]+/)
     .map((part) => part.toLowerCase())
+    .map((part) => (part === "cion" ? "coin" : part === "shuffer" ? "shuffle" : part))
     .filter(Boolean);
 }
 
@@ -435,7 +469,12 @@ export function classify(
 } {
   const tokens = tokensOf(key);
   const parent = tokensOf(parentKey);
-  const rejected = tokens.some((token) => REJECT.has(token));
+  const rejected =
+    tokens.some((token) => REJECT.has(token)) ||
+    parent.some((token) =>
+      ["cost", "price", "fee", "reward", "rewards", "rewarded", "payout"].includes(token),
+    ) ||
+    /adcount$/i.test(key.replace(/[^A-Za-z0-9]/g, ""));
 
   if (typeof value === "number" && Number.isFinite(value) && !rejected) {
     const money = moneyConfidence(tokens, parent, value);
@@ -544,7 +583,14 @@ export function collect(
   const walk = (node: Json, path: string, key: string, parentKey: string, siblings: string[]) => {
     if (truncated) return;
     if (typeof node === "number" && Number.isFinite(node)) {
-      const found = classify(key, parentKey, node);
+      let found = classify(key, parentKey, node);
+      if (
+        found.role !== "money" &&
+        /^amount$/i.test(key) &&
+        siblings.some((s) => /^item_id$/i.test(s))
+      ) {
+        found = { role: "money", lockOff: false, confidence: 75 };
+      }
       leaves.push({
         path,
         key,
@@ -733,6 +779,244 @@ export function confidenceLabel(confidence: number): string {
   if (confidence >= 65) return `Medium · ${confidence}%`;
   return `Low · ${confidence}%`;
 }
+const FIELD_LABELS: Record<string, string> = {
+  coin: "Coins",
+  coins: "Coins",
+  curcoin: "Coins",
+  totalcoins: "Coins",
+  roundcoin: "Round Cash",
+  bigcoin: "Big Coins",
+  userdata_bigcoin: "Big Coins",
+  gem: "Gems",
+  gems: "Gems",
+  diamond: "Diamonds",
+  diamonds: "Diamonds",
+  totaldiamond: "Diamonds",
+  gold: "Gold",
+  cash: "Cash",
+  money: "Money",
+  pigmoney: "Piggy Bank",
+  energy: "Energy",
+  stamina: "Stamina",
+  life: "Lives",
+  lives: "Lives",
+  heart: "Hearts",
+  hearts: "Hearts",
+  key: "Keys",
+  keys: "Keys",
+  star: "Stars",
+  stars: "Stars",
+  ticket: "Tickets",
+  tickets: "Tickets",
+  token: "Tokens",
+  tokens: "Tokens",
+  credit: "Credits",
+  credits: "Credits",
+  flower: "Flowers",
+  flowers: "Flowers",
+  crystal: "Crystals",
+  crystals: "Crystals",
+  jewel: "Jewels",
+  jewels: "Jewels",
+  hint: "Boosters: Hint",
+  undo: "Boosters: Undo",
+  refresh: "Boosters: Refresh",
+  shuffle: "Boosters: Shuffle",
+  brush: "Boosters: Brush",
+  curbrush: "Boosters: Brush",
+  boom: "Boosters: Bomb",
+  bomb: "Boosters: Bomb",
+  tip: "Boosters: Tip",
+  hammer: "Boosters: Hammer",
+  wand: "Boosters: Wand",
+  magnet: "Boosters: Magnet",
+  cannon: "Boosters: Cannon",
+  hintprop: "Boosters: Hint",
+  undoprop: "Boosters: Undo",
+  refreshprop: "Boosters: Refresh",
+  shufferpropcount: "Boosters: Shuffle",
+  boompropcount: "Boosters: Bomb",
+  tippropcount: "Boosters: Tip",
+  offlinecoins: "Offline Coins",
+  dailycoins: "Daily Coins",
+};
+
+const BOOSTER_WORDS = new Set([
+  "hint",
+  "undo",
+  "refresh",
+  "shuffle",
+  "brush",
+  "boom",
+  "bomb",
+  "tip",
+  "hammer",
+  "wand",
+  "magnet",
+  "cannon",
+  "booster",
+  "boosters",
+]);
+
+function titleWords(parts: string[]): string {
+  return parts
+    .filter((part) => part && !/^\d+$/.test(part))
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function labelFromTokens(raw: string): string | undefined {
+  const lower = raw.toLowerCase();
+  const compact = tokensOf(raw).join("");
+  if (FIELD_LABELS[lower]) return FIELD_LABELS[lower];
+  if (FIELD_LABELS[compact]) return FIELD_LABELS[compact];
+  for (const token of tokensOf(raw)) {
+    if (FIELD_LABELS[token]) return FIELD_LABELS[token];
+  }
+  return undefined;
+}
+
+/** Friendly name for a field, e.g. "Coins" or "Boosters: Hammer". Uncertain guesses end with "(unsure)". */
+export function fieldLabel(leaf: Pick<Leaf, "key" | "path" | "role" | "confidence">): string {
+  const parts = leaf.path.split(/[.\[\]]+/).filter(Boolean);
+  const parent = parts.length >= 2 ? parts[parts.length - 2] : "";
+  let label = labelFromTokens(leaf.key);
+  if (!label && (AMOUNT.has(leaf.key.toLowerCase()) || /^(value|amount|count|qty|quantity)$/i.test(leaf.key))) {
+    label = labelFromTokens(parent) ?? (parent ? titleWords(tokensOf(parent)) : undefined);
+  }
+  if (!label) {
+    const booster = tokensOf(leaf.key).find((token) => BOOSTER_WORDS.has(token));
+    if (booster) label = `Boosters: ${titleWords([booster])}`;
+  }
+  if (!label) {
+    const named = tokensOf(leaf.key).filter(
+      (token) => !QUALIFIER.has(token) && !AMOUNT.has(token) && !/^\d+$/.test(token),
+    );
+    label = titleWords(named.length ? named : tokensOf(leaf.key)) || leaf.key;
+  }
+  const sure =
+    (leaf.role === "money" && leaf.confidence >= 70) || leaf.role === "unlock" || leaf.role === "upgrade";
+  const knownKey = Boolean(
+    labelFromTokens(leaf.key) || (AMOUNT.has(leaf.key.toLowerCase()) && labelFromTokens(parent)),
+  );
+  if (!sure || !knownKey) return `${label} (unsure)`;
+  return label;
+}
+
+/** Decode a save file name, including Unity UTF-16 base64 names like UserData_BigCoin. */
+export function friendlyFileKey(name: string): string {
+  const base = (name.split(/[/\\]/).pop() ?? name).replace(
+    /\.(es3|json|txt|sav|dat|bak|bac|xml|db|pref|prefs)$/i,
+    "",
+  );
+  if (looksBase64(base) || looksBase64(`${base.replace(/=+$/, "")}==`)) {
+    const bytes = b64ToBytes(base);
+    if (bytes && bytes.length >= 2 && bytes.length % 2 === 0) {
+      try {
+        const utf16 = new TextDecoder("utf-16le", { fatal: true }).decode(bytes).replace(/\0/g, "").trim();
+        if (/^[A-Za-z][A-Za-z0-9_ ]{1,80}$/.test(utf16)) return utf16.replace(/\s+/g, "_");
+      } catch {
+        /* not a utf-16 name */
+      }
+    }
+  }
+  return base || "value";
+}
+
+export function isTelemetryName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return /blackboard|voodoolive|analytics|appsflyer|firebase|crashlytics|session_data|tracks\.xml|remote-config|remoteconfig|device_info|device_installation/.test(
+    lower,
+  );
+}
+
+/** Turn Easy Save / JS-style JSON (unquoted keys, trailing commas) into strict JSON. */
+export function relaxJson(text: string): string | null {
+  const trimmed = text.trim();
+  if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return null;
+  try {
+    JSON.parse(trimmed);
+    return trimmed;
+  } catch {
+    /* try to repair */
+  }
+  let out = "";
+  let i = 0;
+  let inStr = false;
+  let escape = false;
+  const n = trimmed.length;
+  while (i < n) {
+    const c = trimmed[i];
+    if (inStr) {
+      out += c;
+      if (escape) escape = false;
+      else if (c === "\\") escape = true;
+      else if (c === '"') inStr = false;
+      i++;
+      continue;
+    }
+    if (c === '"') {
+      inStr = true;
+      out += c;
+      i++;
+      continue;
+    }
+    if (c === "/" && trimmed[i + 1] === "/") {
+      i += 2;
+      while (i < n && trimmed[i] !== "\n") i++;
+      continue;
+    }
+    if (c === "/" && trimmed[i + 1] === "*") {
+      i += 2;
+      while (i + 1 < n && !(trimmed[i] === "*" && trimmed[i + 1] === "/")) i++;
+      i += 2;
+      continue;
+    }
+    if (c === ",") {
+      let j = i + 1;
+      while (j < n && /\s/.test(trimmed[j])) j++;
+      if (j < n && (trimmed[j] === "}" || trimmed[j] === "]")) {
+        i++;
+        continue;
+      }
+    }
+    if (c === "{" || c === "," || c === "[") {
+      out += c;
+      i++;
+      let j = i;
+      while (j < n && /\s/.test(trimmed[j])) {
+        out += trimmed[j];
+        j++;
+      }
+      if (j < n && /[A-Za-z_0-9]/.test(trimmed[j])) {
+        const start = j;
+        if (/\d/.test(trimmed[j])) {
+          while (j < n && /\d/.test(trimmed[j])) j++;
+        } else {
+          while (j < n && /[A-Za-z0-9_]/.test(trimmed[j])) j++;
+        }
+        let k = j;
+        while (k < n && /\s/.test(trimmed[k])) k++;
+        if (k < n && trimmed[k] === ":") {
+          out += `"${trimmed.slice(start, j)}"${trimmed.slice(j, k)}`;
+          i = k;
+          continue;
+        }
+      }
+      i = j;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  try {
+    JSON.parse(out);
+    return out;
+  } catch {
+    return null;
+  }
+}
+
 
 function escapeXml(value: string): string {
   return value
@@ -887,17 +1171,10 @@ function b64ToUtf8(value: string): string | null {
 }
 
 function tryParseJson(text: string): Json | null {
-  const trimmed = text.trim();
-  if (
-    !(
-      (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-      (trimmed.startsWith("[") && trimmed.endsWith("]"))
-    )
-  ) {
-    return null;
-  }
+  const relaxed = relaxJson(text);
+  if (!relaxed) return null;
   try {
-    const data = JSON.parse(trimmed) as Json;
+    const data = JSON.parse(relaxed) as Json;
     if (data && typeof data === "object") return data;
   } catch {
     /* not json */
@@ -1026,12 +1303,39 @@ function finishParse(name: string, format: Format, text: string, data: Json, ext
 
 export function parseText(name: string, text: string): Loaded {
   const trimmed = text.trim();
+  if (isTelemetryName(name)) {
+    const relaxed = relaxJson(trimmed);
+    if (relaxed) {
+      try {
+        const data = JSON.parse(relaxed) as Json;
+        return {
+          name,
+          format: "json",
+          originalText: text,
+          data,
+          tags: {},
+          writable: false,
+          warnings: ["This looks like analytics or remote-config data, not a player save."],
+        };
+      } catch {
+        /* fall through */
+      }
+    }
+  }
+  const asNumber = asNumericString(trimmed);
+  if (asNumber !== null) {
+    const key = friendlyFileKey(name);
+    return finishParse(name, "json", text, { [key]: asNumber });
+  }
   if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-    try {
-      const data = JSON.parse(trimmed) as Json;
-      return finishParse(name, "json", text, data);
-    } catch {
-      /* fall through */
+    const relaxed = relaxJson(trimmed);
+    if (relaxed) {
+      try {
+        const data = JSON.parse(relaxed) as Json;
+        return finishParse(name, "json", text, data);
+      } catch {
+        /* fall through */
+      }
     }
   }
   const unity = parseUnityPrefs(text);
@@ -1294,7 +1598,9 @@ export function scanBinary(bytes: Uint8Array): BinaryHit[] {
           if (seen.has(off)) continue;
           const le = readInt32(bytes, off, true);
           if (le === null) continue;
-          if (le < 0 || le > 1_000_000_000) continue;
+          const coreWord = MONEY_CORE.has(word);
+          const cap = coreWord ? 200_000_000 : 10_000_000;
+          if (le < 0 || le > cap) continue;
           // Skip values that look like a length of a following blob.
           if (le > 0 && le === bytes.length - off - 4 && le > 4096) continue;
           seen.add(off);
@@ -1315,17 +1621,71 @@ export function scanBinary(bytes: Uint8Array): BinaryHit[] {
   return hits;
 }
 
+function consumeJson(text: string, start: number): { data: Json; end: number } | null {
+  if (text[start] !== "{" && text[start] !== "[") return null;
+  let depth = 0;
+  let inStr = false;
+  let escape = false;
+  for (let i = start; i < text.length && i - start < 2_000_000; i++) {
+    const c = text[i];
+    if (inStr) {
+      if (escape) escape = false;
+      else if (c === "\\") escape = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "{" || c === "[") depth++;
+    else if (c === "}" || c === "]") {
+      depth--;
+      if (depth === 0) {
+        const slice = text.slice(start, i + 1);
+        const data = tryParseJson(slice);
+        if (data) return { data, end: i + 1 };
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+function precedingId(text: string, start: number): string {
+  const window = text.slice(Math.max(0, start - 120), start);
+  const ids = [...window.matchAll(/[A-Za-z][A-Za-z0-9_]{2,60}/g)].map((m) => m[0]);
+  return ids.length ? ids[ids.length - 1] : "";
+}
+
 function extractSqliteNumbers(bytes: Uint8Array): { [key: string]: number } {
   const data: { [key: string]: number } = {};
-  // Pull printable runs and pair money-like keys with nearby numeric runs.
   const text = new TextDecoder("latin1").decode(bytes);
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== "{" ) continue;
+    const parsed = consumeJson(text, i);
+    if (!parsed || parsed.end - i < 20) continue;
+    const prefix = precedingId(text, i);
+    if (/leaderboardmembers/i.test(prefix) || /leaderBoardMembers/i.test(prefix)) {
+      i = parsed.end - 1;
+      continue;
+    }
+    const { leaves } = collect(parsed.data);
+    for (const leaf of leaves) {
+      if (leaf.role !== "money" || typeof leaf.value !== "number") continue;
+      if (/members/i.test(leaf.path)) continue;
+      const path = prefix ? `${prefix}.${leaf.path}` : leaf.path;
+      if (data[path] === undefined) data[path] = leaf.value;
+    }
+    i = parsed.end - 1;
+  }
+  if (Object.keys(data).length) return data;
+  // Fallback: pair money-like keys with nearby numeric runs when JSON blobs were not found.
   const runs = [...text.matchAll(/[A-Za-z_][A-Za-z0-9_.]{1,40}|-?\d{1,15}(?:\.\d+)?/g)];
   for (let i = 0; i < runs.length; i++) {
     const run = runs[i][0];
     if (/^-?\d/.test(run)) continue;
     const tokens = tokensOf(run);
+    if (tokens.length === 1 && tokens[0] === "key") continue;
     const conf = moneyConfidence(tokens, [], 1);
-    if (!conf) continue;
+    if (!conf || conf < 80) continue;
     for (let j = i + 1; j < Math.min(i + 6, runs.length); j++) {
       const next = runs[j][0];
       if (!/^-?\d+(\.\d+)?$/.test(next)) continue;
@@ -1375,6 +1735,20 @@ function mostlyText(text: string): boolean {
 
 export function parseBytes(name: string, bytes: Uint8Array): Loaded {
   const lower = name.toLowerCase();
+  if (lower.endsWith(".db-wal") || lower.endsWith(".db-shm")) {
+    return {
+      name,
+      format: "binary",
+      originalText: "",
+      data: null,
+      tags: {},
+      writable: false,
+      warnings: ["This is a SQLite sidecar file. Open the main .db save instead."],
+      binaryPreview: hexPreview(bytes),
+      byteLength: bytes.length,
+      originalBytes: bytes,
+    };
+  }
   if (isSqlite(bytes) || lower.endsWith(".db") || lower.endsWith(".sqlite") || lower.endsWith(".sqlite3")) {
     const extracted = extractSqliteNumbers(bytes);
     const warning =

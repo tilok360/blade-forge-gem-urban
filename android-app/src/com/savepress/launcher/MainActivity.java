@@ -322,7 +322,7 @@ public class MainActivity extends Activity {
                 byte[] bytes = hit.uri ? Shell.readUri(this, Uri.parse(hit.key)) : Shell.readPath(hit.key);
                 String decoded = Codec.decodeBody(bytes);
                 wrapped = decoded != null;
-                SaveText.Doc doc = wrapped ? SaveText.parse(decoded) : SaveText.parseBytes(bytes);
+                SaveText.Doc doc = wrapped ? SaveText.parse(decoded, hit.name) : SaveText.parseBytes(bytes, hit.name);
                 runOnUiThread(() -> {
                     if (doc == null) {
                         showLauncher();
@@ -796,26 +796,45 @@ public class MainActivity extends Activity {
         public View getView(int i, View convert, ViewGroup parent) {
             if (bulldozer != null) {
                 BulldozerText.Row row = BulldozerText.rows(bulldozer.files, showOther).get(i);
-                TextView line = text(row.line(), 16, INK);
-                line.setPadding(0, dp(12), 0, dp(12));
-                return line;
+                LinearLayout col = new LinearLayout(MainActivity.this);
+                col.setOrientation(LinearLayout.VERTICAL);
+                col.setPadding(0, dp(10), 0, dp(10));
+                col.addView(text(row.title, 16, INK));
+                StringBuilder under = new StringBuilder();
+                if (row.id != null && row.id.length() > 0) under.append(row.id);
+                if (row.kind != null && row.kind.length() > 0) {
+                    if (under.length() > 0) under.append("  ");
+                    under.append(row.kind);
+                }
+                if (under.length() > 0) under.append('\n');
+                if (row.value != null) under.append(row.value);
+                col.addView(text(under.toString(), 13, MUTED));
+                return col;
             }
             SaveText.Field field = visible().get(i);
             LinearLayout col = new LinearLayout(MainActivity.this);
             col.setOrientation(LinearLayout.VERTICAL);
             col.setPadding(0, dp(10), 0, dp(10));
-            String label = field.key;
-            if ("coin".equals(field.key)) label = "Cash";
-            else if ("roundCoin".equals(field.key)) label = "Round cash";
-            else if ("key".equals(field.key)) label = "Keys";
-            TextView name = text(label, 16, INK);
-            String value = field.changed() ? field.literal + " → " + field.shown() : field.literal;
-            String extra = "";
-            if ("money".equals(field.role) && field.confidence > 0) {
-                extra += "\n" + SaveText.confidenceLabel(field.confidence);
+            TextView name = text(SaveText.fieldLabel(field), 16, INK);
+            StringBuilder bodyText = new StringBuilder();
+            if (field.key != null) bodyText.append(field.key);
+            if (field.path != null && field.path.length() > 0) {
+                if (bodyText.length() > 0) bodyText.append("  ");
+                bodyText.append(field.path);
             }
-            if (field.warning != null) extra += "\n" + field.warning;
-            TextView body = text(field.path + "\n" + value + extra + "\nTap to change", 13, MUTED);
+            if ("money".equals(field.role) && field.confidence > 0) {
+                bodyText.append('\n').append(SaveText.confidenceLabel(field.confidence));
+            }
+            if (field.warning != null) bodyText.append('\n').append(field.warning);
+            if (activeHit != null && activeHit.name != null) bodyText.append('\n').append(activeHit.name);
+            bodyText.append('\n');
+            if (field.changed()) {
+                bodyText.append(field.literal).append(" -> ").append(field.shown());
+            } else {
+                bodyText.append(field.literal);
+            }
+            bodyText.append('\n').append("Tap to change");
+            TextView body = text(bodyText.toString(), 13, MUTED);
             col.addView(name);
             col.addView(body);
             return col;

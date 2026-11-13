@@ -68,7 +68,7 @@ public class SaveTextTest {
         one.put("item_4", "{\"item_info_array\":[ {\"item_id\":\"10001\", \"amount\":\"59\"}, {\"item_id\":\"10005\", \"amount\":\"3\"} ]}");
         one.put("item_4_s", one.get("item_4"));
         java.util.List<BulldozerText.Row> rows = BulldozerText.rows(one);
-        check("Cash".equals(rows.get(0).title), rows.get(0).line());
+        check("Coins".equals(rows.get(0).title), rows.get(0).line());
         check(BulldozerText.setOne(one, rows.get(0), "1234"), "set cash");
         check(one.get("item_4").contains("\"item_id\":\"10001\", \"amount\":\"1234\""), one.get("item_4"));
         check(one.get("item_4").contains("\"amount\":\"3\""), one.get("item_4"));
@@ -215,6 +215,49 @@ public class SaveTextTest {
         System.arraycopy(magic, 0, sqlite, 0, magic.length);
         SaveText.Doc sql = SaveText.parseBytes(sqlite);
         check(sql != null && !sql.writable && sql.warning.toLowerCase().contains("sqlite"), "sqlite");
+
+        String es3Unquoted = "{\n\t\"PlayerInfo\" : {\n\t\t\"__type\" : \"PlayerInfo\",\n\t\t\"value\" : {\n\t\t\"TotalCoins\" : 150,\n\t\t\"TotalDiamond\" : 20,\n\t\t\"WatchCounts\" : {100001:44}\n\t}\n\t},\n}";
+        SaveText.Doc unquoted = SaveText.parse(es3Unquoted, "GameSave");
+        check(unquoted != null, "unquoted es3 parse");
+        boolean coins = false, diamonds = false;
+        for (SaveText.Field f : unquoted.fields) {
+            if ("TotalCoins".equals(f.key) && "150".equals(f.literal) && "money".equals(f.role)) {
+                coins = true;
+                check(SaveText.fieldLabel(f).equals("Coins"), "label coins " + SaveText.fieldLabel(f));
+            }
+            if ("TotalDiamond".equals(f.key) && "20".equals(f.literal) && "money".equals(f.role)) {
+                diamonds = true;
+                check(SaveText.fieldLabel(f).equals("Diamonds"), "label diamonds");
+            }
+        }
+        check(coins && diamonds, "unquoted es3 fields");
+
+        check(SaveText.friendlyFileKey("files/VQBzAGUAcgBEAGEAdABhAF8AQgBpAGcAQwBvAGkAbgA=").equals("UserData_BigCoin"), "file key");
+        SaveText.Doc bare = SaveText.parse("MgAwADAAMAAwADAAMAAwADAA", "files/VQBzAGUAcgBEAGEAdABhAF8AQgBpAGcAQwBvAGkAbgA=");
+        // wrapped? Codec may not apply in parse(); the body is already a number after Codec.decodeBody.
+        // Test the decoded number path:
+        SaveText.Doc bareNum = SaveText.parse("200000000", "UserData_BigCoin");
+        check(bareNum != null && !bareNum.fields.isEmpty(), "bare number");
+        check(SaveText.fieldLabel(bareNum.fields.get(0)).equals("Big Coins"), "big coins label " + SaveText.fieldLabel(bareNum.fields.get(0)));
+
+        SaveText.Doc pixel = SaveText.parse("{\"curCoin\":220,\"curLanguage\":1,\"curBrush\":4,\"ShufferPropCount\":5}");
+        boolean gotCoin = false, gotLang = false, gotBrush = false, gotShuffle = false;
+        for (SaveText.Field f : pixel.fields) {
+            if ("curCoin".equals(f.key) && "money".equals(f.role)) {
+                gotCoin = true;
+                check(SaveText.fieldLabel(f).equals("Coins"), "curCoin label");
+            }
+            if ("curLanguage".equals(f.key) && "money".equals(f.role)) gotLang = true;
+            if ("curBrush".equals(f.key) && "money".equals(f.role)) {
+                gotBrush = true;
+                check(SaveText.fieldLabel(f).startsWith("Boosters: Brush"), "brush label " + SaveText.fieldLabel(f));
+            }
+            if ("ShufferPropCount".equals(f.key) && "money".equals(f.role)) gotShuffle = true;
+        }
+        check(gotCoin && gotBrush && gotShuffle && !gotLang, "pixel boosters");
+
+        SaveText.Doc unsure = SaveText.parse("{\"day\":3}");
+        check(SaveText.fieldLabel(unsure.fields.get(0)).contains("(unsure)"), "unsure label");
 
         System.out.println("ok");
 

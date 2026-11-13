@@ -1,10 +1,12 @@
 #!/bin/sh
 set -eu
-for _jdk in /home/box/tools/jdk-17.0.21+9/bin /workspace/tools/jdk/bin; do
-  if [ -x "$_jdk/javac" ]; then PATH="$_jdk:$PATH"; fi
-done
+# Pin JDK 17 so d8 8.2.2 can read the class files (JDK 21 --release 11 output NPEs this d8).
+if [ -x /home/box/tools/jdk-17.0.21+9/bin/javac ]; then
+  PATH="/home/box/tools/jdk-17.0.21+9/bin:$PATH"
+elif [ -x /workspace/tools/jdk/bin/javac ]; then
+  PATH="/workspace/tools/jdk/bin:$PATH"
+fi
 export PATH
-unset _jdk
 ROOT="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 if [ -z "${ANDROID_SDK_ROOT:-}" ]; then
   if [ -d /workspace/tools/android/platforms/android-34 ]; then ANDROID_SDK_ROOT=/workspace/tools/android
@@ -48,13 +50,13 @@ fi
   --manifest "$ROOT/AndroidManifest.xml" \
   --min-sdk-version 26 \
   --target-sdk-version 34 \
-  --version-code 15 \
-  --version-name 2.4 \
+  --version-code 16 \
+  --version-name 2.5 \
   --java "$OUT/gen" \
   -o "$OUT/base.apk" \
   "$OUT/res.zip"
 
-javac --release 11 -classpath "$JAR:$OUT/shizuku.jar" -d "$OUT/classes" \
+javac --release 11 -XDstringConcat=inline -classpath "$JAR:$OUT/shizuku.jar" -d "$OUT/classes" \
   $(find "$ROOT/src/com/savepress/launcher" -name '*.java' ! -name 'SaveTextTest.java') \
   $(find "$OUT/gen" -name '*.java')
 

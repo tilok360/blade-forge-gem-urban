@@ -190,10 +190,10 @@ public final class BulldozerText {
         if (showOther) {
             out.addAll(rest);
             String user = files.get("UserData");
-            out.add(new Row("Profile coin", user == null ? "?" : valueOf(user, "coin"), "user", "coin"));
+            out.add(new Row("Coins", user == null ? "?" : valueOf(user, "coin"), "user", "coin"));
             out.add(new Row("Keys", user == null ? "?" : valueOf(user, "key"), "user", "key"));
             out.add(new Row("Round cash", user == null ? "?" : valueOf(user, "roundCoin"), "user", "roundCoin"));
-            out.add(new Row("Big cash", files.getOrDefault("UserData_BigCoin", "0").trim(), "big", "big"));
+            out.add(new Row("Big Coins", files.getOrDefault("UserData_BigCoin", "0").trim(), "big", "big"));
             String room = files.get("secretary_room_4");
             if (room != null) addAffinity(room, out);
         }
@@ -509,7 +509,7 @@ public final class BulldozerText {
     }
 
     static String label(String id) {
-        if ("10001".equals(id)) return "Cash";
+        if ("10001".equals(id)) return "Coins";
         if ("10004".equals(id)) return "Gold bars";
         if ("10005".equals(id)) return "Gems";
         if ("10002".equals(id)) return "Research points";
