@@ -322,16 +322,16 @@ public class MainActivity extends Activity {
                 byte[] bytes = hit.uri ? Shell.readUri(this, Uri.parse(hit.key)) : Shell.readPath(hit.key);
                 String decoded = Codec.decodeBody(bytes);
                 wrapped = decoded != null;
-                if (!wrapped && SaveText.looksBinary(bytes)) {
-                    runOnUiThread(() -> setStatus(hit.name + " looks binary. Savepress only rewrites text saves."));
-                    return;
-                }
-                String text = wrapped ? decoded : new String(bytes, StandardCharsets.UTF_8);
-                SaveText.Doc doc = SaveText.parse(text);
+                SaveText.Doc doc = wrapped ? SaveText.parse(decoded) : SaveText.parseBytes(bytes);
                 runOnUiThread(() -> {
                     if (doc == null) {
                         showLauncher();
                         setStatus(hit.name + " isn't JSON, preferences, or key=value.");
+                        return;
+                    }
+                    if (doc.encrypted || (!doc.writable && doc.fields.isEmpty())) {
+                        showLauncher();
+                        setStatus(doc.warning != null ? doc.warning : (hit.name + " looks encrypted. Savepress won't change it."));
                         return;
                     }
                     activeDoc = doc;
@@ -361,13 +361,23 @@ public class MainActivity extends Activity {
         fieldAdapter = new FieldAdapter();
         list.setAdapter(fieldAdapter);
         int moneyFields = 0;
+        boolean checksum = false;
         for (SaveText.Field field : activeDoc.fields) {
             if ("money".equals(field.role)) moneyFields++;
+            if (field.warning != null) checksum = true;
         }
         if (moneyFields == 0) showOther = true;
-        setStatus(moneyFields == 0
+        String statusText = moneyFields == 0
                 ? "This screen is Savepress, not the game. Tap a number, then Save into the game, then Play."
-                : "Cash is the coin line. Type an amount, tap Set money, then Save into the game, then Play.");
+                : "Cash fields are ranked by how sure Savepress is. Type an amount, tap Give all, then Save into the game, then Play.";
+        if (activeDoc.warning != null) statusText = activeDoc.warning + " " + statusText;
+        else if (checksum) statusText = "A checksum sits next to a currency field. Changing the amount may not stick until the hash is updated too. " + statusText;
+        if (!activeDoc.writable) statusText = activeDoc.warning != null ? activeDoc.warning : "This file is listed but won't be rewritten.";
+        setStatus(statusText);
+        if (!"binary".equals(activeDoc.format) && moneyFields > 0) {
+            moneyBox.setText("999999999");
+            moneyBox.setHint("Safe max 999999999");
+        }
     }
 
     private void showLauncher() {
@@ -502,6 +512,11 @@ public class MainActivity extends Activity {
             return;
         }
         if (activeDoc == null) return;
+        if (!activeDoc.writable) {
+            setStatus(activeDoc.warning != null ? activeDoc.warning : "Savepress won't change this file.");
+            return;
+        }
+        if (money > SaveText.SAFE_MONEY) money = SaveText.SAFE_MONEY;
         int n = SaveText.stamp(activeDoc, money, 10);
         if (fieldAdapter != null) fieldAdapter.notifyDataSetChanged();
         setStatus(n == 0
@@ -529,18 +544,30 @@ public class MainActivity extends Activity {
             return;
         }
         if (activeDoc == null || activeHit == null) return;
+        if (!activeDoc.writable) {
+            setStatus(activeDoc.warning != null ? activeDoc.warning : "Savepress won't change this file, so it stays intact.");
+            return;
+        }
         final String text = activeDoc.render();
         final Finder.Hit hit = activeHit;
+        final SaveText.Doc doc = activeDoc;
+        final boolean wrap = wrapped;
         saveButton.setEnabled(false);
         new Thread(() -> {
             try {
-                byte[] data = wrapped ? Codec.encodeBody(text) : text.getBytes(StandardCharsets.UTF_8);
-                if (hit.uri) Shell.writeUri(this, Uri.parse(hit.key), data);
-                else Shell.writePath(hit.key, data);
-                if (wrapped && !hit.uri && "UserData".equals(Codec.logicalName(hit.name))) writeBigCoin(hit.key);
+                byte[] data;
+                if (wrap) data = Codec.encodeBody(text);
+                else if ("binary".equals(doc.format) && doc.originalBytes != null) data = doc.renderBytes();
+                else data = text.getBytes(StandardCharsets.UTF_8);
+                if (hit.uri) {
+                    backupUri(hit, wrap ? Codec.encodeBody(doc.original == null ? text : doc.original)
+                            : (doc.originalBytes != null ? doc.originalBytes : (doc.original == null ? data : doc.original.getBytes(StandardCharsets.UTF_8))));
+                    Shell.writeUri(this, Uri.parse(hit.key), data);
+                } else Shell.writePath(hit.key, data);
+                if (wrap && !hit.uri && "UserData".equals(Codec.logicalName(hit.name))) writeBigCoin(hit.key);
                 runOnUiThread(() -> {
                     saveButton.setEnabled(true);
-                    setStatus("Wrote the save. Open the game again to see it.");
+                    setStatus("Wrote the save. The original is kept as a .bak file. Open the game again to see it.");
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> {
@@ -562,6 +589,25 @@ public class MainActivity extends Activity {
             Shell.writePath(sibling, Codec.encodeBody(amount));
         } catch (Exception ignored) {
             /* no separate big-coin file */
+        }
+    }
+
+
+    private void backupUri(Finder.Hit hit, byte[] original) {
+        if (original == null || hit == null) return;
+        try {
+            java.io.File dir = getExternalFilesDir("backups");
+            if (dir == null) dir = getFilesDir();
+            if (!dir.exists() && !dir.mkdirs()) return;
+            String name = Codec.logicalName(hit.name);
+            if (name == null || name.isEmpty()) name = "save";
+            java.io.File bak = new java.io.File(dir, name + ".bak");
+            if (bak.exists()) return;
+            try (java.io.FileOutputStream out = new java.io.FileOutputStream(bak)) {
+                out.write(original);
+            }
+        } catch (Exception ignored) {
+            /* best-effort backup */
         }
     }
 
@@ -727,9 +773,15 @@ public class MainActivity extends Activity {
             if (bulldozer != null || activeDoc == null) return out;
             for (SaveText.Field field : activeDoc.fields) {
                 if (!showOther && !"money".equals(field.role)) continue;
-                if ("coin".equals(field.key)) out.add(0, field);
-                else out.add(field);
+                out.add(field);
             }
+            Collections.sort(out, (a, b) -> {
+                int byConf = Integer.compare(b.confidence, a.confidence);
+                if (byConf != 0) return byConf;
+                if ("coin".equals(a.key) && !"coin".equals(b.key)) return -1;
+                if ("coin".equals(b.key) && !"coin".equals(a.key)) return 1;
+                return a.path.compareTo(b.path);
+            });
             return out;
         }
         public int getCount() {
@@ -758,7 +810,12 @@ public class MainActivity extends Activity {
             else if ("key".equals(field.key)) label = "Keys";
             TextView name = text(label, 16, INK);
             String value = field.changed() ? field.literal + " → " + field.shown() : field.literal;
-            TextView body = text(field.path + "\n" + value + "\nTap to change", 13, MUTED);
+            String extra = "";
+            if ("money".equals(field.role) && field.confidence > 0) {
+                extra += "\n" + SaveText.confidenceLabel(field.confidence);
+            }
+            if (field.warning != null) extra += "\n" + field.warning;
+            TextView body = text(field.path + "\n" + value + extra + "\nTap to change", 13, MUTED);
             col.addView(name);
             col.addView(body);
             return col;

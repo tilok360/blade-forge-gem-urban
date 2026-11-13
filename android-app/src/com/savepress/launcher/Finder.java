@@ -172,20 +172,25 @@ public final class Finder {
                             : Shell.readPath(hit.key);
                     if (!hit.uri) modified = Shell.modified(hit.key);
                     String text = Codec.decodeBody(bytes);
-                    if (text == null) {
-                        if (bytes.length > 1_500_000 || SaveText.looksBinary(bytes)) score = -50;
-                        else text = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
-                    }
+                    String logical = Codec.logicalName(hit.name);
+                    SaveText.Doc doc;
                     if (text != null) {
-                        String logical = Codec.logicalName(hit.name);
-                        if (SaveText.analytics(logical, text)) score = -1000;
-                        else {
-                            SaveText.Doc doc = SaveText.parse(text);
-                            int interest = SaveText.interest(doc);
-                            if (doc != null && interest >= 40) score = 1000 + interest;
-                            else if (doc != null && !doc.fields.isEmpty()) score = 100 + interest;
-                            else score = 0;
+                        if (SaveText.analytics(logical, text)) {
+                            score = -1000;
+                            doc = null;
+                        } else {
+                            doc = SaveText.parse(text);
                         }
+                    } else {
+                        doc = SaveText.parseBytes(bytes);
+                        if (doc != null && doc.encrypted) score = -50;
+                    }
+                    if (doc != null && score != -1000) {
+                        int interest = SaveText.interest(doc);
+                        if (interest >= 40) score = 1000 + interest;
+                        else if (!doc.fields.isEmpty()) score = 100 + interest;
+                        else if (doc.encrypted) score = -50;
+                        else score = 0;
                     }
                 } catch (Exception ignored) {
                     score = -1;

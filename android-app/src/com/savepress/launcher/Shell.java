@@ -84,6 +84,30 @@ public final class Shell {
     }
 
     public static void writePath(String path, byte[] data) throws Exception {
+        backup(path);
+        writePathRaw(path, data);
+    }
+
+    /** First original is kept as path.bak and is not overwritten later. */
+    public static void backup(String path) {
+        if (path == null || path.endsWith(".bak")) return;
+        String bak = path + ".bak";
+        try {
+            readPath(bak);
+            return;
+        } catch (Exception ignored) {
+            /* no backup yet */
+        }
+        try {
+            byte[] original = readPath(path);
+            if (original == null) return;
+            writePathRaw(bak, original);
+        } catch (Exception ignored) {
+            /* original missing or backup folder not writable */
+        }
+    }
+
+    public static void writePathRaw(String path, byte[] data) throws Exception {
         File file = new File(path);
         File parent = file.getParentFile();
         if (parent != null && parent.canWrite()) {

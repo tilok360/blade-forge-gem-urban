@@ -13,15 +13,16 @@ import {
 } from "lucide-react";
 import {
   collect,
+  confidenceLabel,
   countRoles,
-  hexPreview,
-  isBinary,
+  parseBytes,
   parseText,
   planStamp,
   SAMPLE_RECIPES,
   SAMPLE_TEXT,
   sampleSave,
   serialize,
+  serializeBytes,
   withOverrides,
   type Json,
   type Leaf,
@@ -189,25 +190,17 @@ export function SavepressApp() {
       return;
     }
     const bytes = new Uint8Array(await file.arrayBuffer());
-    if (isBinary(bytes)) {
+    const loaded = parseBytes(file.name || "save.json", bytes);
+    if (!loaded.data) {
       openLoaded(
-        {
-          name: file.name,
-          format: "binary",
-          originalText: "",
-          data: null,
-          tags: {},
-          binaryPreview: hexPreview(bytes),
-          byteLength: bytes.length,
-        },
+        loaded,
         {},
-        "This looks like a binary save. Savepress only rewrites text saves — JSON, preferences XML, or key=value.",
+        loaded.warnings?.[0] ??
+          "This looks like a binary save. Savepress only rewrites text saves — JSON, preferences XML, or key=value.",
         gameId,
       );
       return;
     }
-    const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-    const loaded = parseText(file.name || "save.json", text);
     const overrides: Record<string, number | boolean> = {};
     let note = `Opened ${loaded.name}.`;
     if (recipe && loaded.data) {
@@ -229,6 +222,9 @@ export function SavepressApp() {
         : `“${recipe.title}” didn’t match any fields in this file.`;
     } else if (recipe && !loaded.data) {
       note = "That file isn’t a structured save, so the recipe had nothing to match.";
+    }
+    if (loaded.warnings?.length) {
+      note = `${note} ${loaded.warnings[0]}`;
     }
     openLoaded(loaded, overrides, note, gameId);
   }
@@ -399,7 +395,7 @@ export function SavepressApp() {
             setPendingRecipe(recipe);
             fileRef.current?.click();
           }}
-          onRecent={(file) => openLoaded(parseText(file.name, file.text), {}, `Reopened ${file.name}.`)}
+          onRecent={(file) => openLoaded(loadStored(file), {}, `Reopened ${file.name}.`)}
           onBackups={() => setScreen("backups")}
           onDeleteRecipe={(id) => {
             const next = recipes.filter((recipe) => recipe.id !== id);
@@ -447,7 +443,7 @@ export function SavepressApp() {
         <Backups
           files={backups}
           onBack={() => setScreen("home")}
-          onOpen={(file) => openLoaded(parseText(file.name, file.text), {}, `Restored a backup of ${file.name}.`)}
+          onOpen={(file) => openLoaded(loadStored(file), {}, `Restored a backup of ${file.name}.`)}
           onDelete={async (id) => {
             await deleteStored(id);
             await refreshFiles();
@@ -788,7 +784,7 @@ function Editor({
   onSaveRecipe: (recipe: UserRecipe) => void;
   onDownloaded: () => Promise<void>;
 }) {
-  const [maxMoney, setMaxMoney] = useState("9999999");
+  const [maxMoney, setMaxMoney] = useState("999999999");
   const [maxLevel, setMaxLevel] = useState("99");
   const [useMoney, setUseMoney] = useState(true);
   const [useUnlocks, setUseUnlocks] = useState(true);
@@ -802,7 +798,10 @@ function Editor({
   const compareRef = useRef<HTMLInputElement>(null);
 
   const collected = useMemo(
-    () => (draft.loaded.data ? collect(draft.loaded.data) : { leaves: [] as Leaf[], truncated: false }),
+    () =>
+      draft.loaded.data
+        ? collect(draft.loaded.data, { tags: draft.loaded.tags })
+        : { leaves: [] as Leaf[], truncated: false },
     [draft.loaded],
   );
   const leaves = collected.leaves;
@@ -854,11 +853,7 @@ function Editor({
       return;
     }
     const bytes = new Uint8Array(await file.arrayBuffer());
-    if (isBinary(bytes)) {
-      setStatus("The other file is binary, so there’s nothing to line up.");
-      return;
-    }
-    const other = parseText(file.name, new TextDecoder().decode(bytes));
+    const other = parseBytes(file.name, bytes);
     if (!other.data) {
       setStatus("The other file isn’t a structured save.");
       return;
@@ -885,18 +880,28 @@ function Editor({
 
   async function download() {
     try {
-      let text = draft.rawText;
-      if (draft.loaded.format !== "text" && draft.loaded.data) {
-        text = serialize(draft.loaded, withOverrides(draft.loaded.data, draft.overrides));
+      if (draft.loaded.writable === false) {
+        setStatus(draft.loaded.warnings?.[0] ?? "Savepress won't change this file, so it stays intact.");
+        return;
       }
-      if (draft.gameId && (await writeLinked(draft.gameId, text))) {
-        if (draft.loaded.originalText) {
+      const originalBackup =
+        draft.loaded.originalBytes && draft.loaded.originalBytes.length
+          ? bytesToB64(draft.loaded.originalBytes)
+          : draft.loaded.originalText;
+      let payload: string | Uint8Array = draft.rawText;
+      if (draft.loaded.format === "binary" && draft.loaded.data) {
+        payload = serializeBytes(draft.loaded, withOverrides(draft.loaded.data, draft.overrides));
+      } else if (draft.loaded.format !== "text" && draft.loaded.data) {
+        payload = serialize(draft.loaded, withOverrides(draft.loaded.data, draft.overrides));
+      }
+      if (typeof payload === "string" && draft.gameId && (await writeLinked(draft.gameId, payload))) {
+        if (originalBackup) {
           await putFile({
             id: `backup:${draft.loaded.name}:${Date.now()}`,
             kind: "backup",
             name: draft.loaded.name,
             at: Date.now(),
-            text: draft.loaded.originalText,
+            text: originalBackup,
             format: draft.loaded.format,
           });
           await onDownloaded();
@@ -904,14 +909,15 @@ function Editor({
         setStatus("Wrote the stamp back into the game's save. Open the game to see it.");
         return;
       }
-      downloadText(draft.loaded.name || "save.json", text);
-      if (draft.loaded.originalText) {
+      if (typeof payload === "string") downloadText(draft.loaded.name || "save.json", payload);
+      else downloadBytes(draft.loaded.name || "save.dat", payload);
+      if (originalBackup) {
         await putFile({
           id: `backup:${draft.loaded.name}:${Date.now()}`,
           kind: "backup",
           name: draft.loaded.name,
           at: Date.now(),
-          text: draft.loaded.originalText,
+          text: originalBackup,
           format: draft.loaded.format,
         });
         await onDownloaded();
@@ -971,15 +977,20 @@ function Editor({
       </button>
       <h1 className="mt-2 truncate font-display text-3xl text-balance">{draft.loaded.name}</h1>
       <p className="mt-1 text-sm text-muted">
-        {formatLabel(draft.loaded.format)}
+        {formatLabel(draft.loaded)}
         {draft.loaded.byteLength ? ` · ${draft.loaded.byteLength.toLocaleString()} bytes` : ""}
         {draft.loaded.data
           ? ` · ${counts.money} money · ${counts.unlock} locks · ${counts.upgrade} upgrades`
           : ""}
       </p>
       {status && <p className="mt-3 text-pretty text-sm text-copper">{status}</p>}
+      {draft.loaded.warnings?.map((warning) => (
+        <p key={warning} className="mt-2 text-pretty text-sm text-copper">
+          {warning}
+        </p>
+      ))}
 
-      {draft.loaded.format === "binary" && (
+      {draft.loaded.format === "binary" && draft.loaded.binaryPreview && (
         <pre className="card mt-4 overflow-x-auto font-mono text-xs leading-5 text-ink">{draft.loaded.binaryPreview}</pre>
       )}
 
@@ -1131,7 +1142,7 @@ function Editor({
           type="button"
           className="btn-primary flex-1"
           onClick={() => void download()}
-          disabled={draft.loaded.format === "binary"}
+          disabled={draft.loaded.writable === false}
         >
           <Download className="size-5" aria-hidden="true" />
           {draft.gameId && hasLiveHandle(draft.gameId) ? "Save into the game" : changeCount ? "Download stamped" : "Download"}
@@ -1170,7 +1181,9 @@ function FieldGroups({
   return (
     <div className="mt-4 grid gap-4">
       {order.map((role) => {
-        const group = leaves.filter((leaf) => leaf.role === role);
+        const group = leaves
+          .filter((leaf) => leaf.role === role)
+          .sort((a, b) => (role === "money" ? (b.confidence ?? 0) - (a.confidence ?? 0) : 0));
         if (!group.length) return null;
         return (
           <section key={role}>
@@ -1184,6 +1197,10 @@ function FieldGroups({
                     <div className="min-w-0 flex-1">
                       <div className="truncate font-medium">{leaf.key}</div>
                       <div className="truncate text-sm text-muted">{leaf.path}</div>
+                      {leaf.role === "money" && leaf.confidence > 0 && (
+                        <div className="text-sm text-muted">{confidenceLabel(leaf.confidence)}</div>
+                      )}
+                      {leaf.warning && <div className="text-sm text-copper">{leaf.warning}</div>}
                       {dirty && (
                         <div className="text-sm text-copper tabular-nums">was {String(leaf.value)}</div>
                       )}
@@ -1390,12 +1407,57 @@ function formatWhen(at: number): string {
   });
 }
 
-function formatLabel(format: Loaded["format"]): string {
-  if (format === "json") return "JSON";
-  if (format === "prefs") return "Android preferences";
-  if (format === "pairs") return "Key list";
-  if (format === "binary") return "Binary";
+function formatLabel(loaded: Loaded): string {
+  if (loaded.format === "json") return "JSON";
+  if (loaded.format === "prefs") {
+    return loaded.prefStyle === "unity" ? "Unity PlayerPrefs" : "Android preferences";
+  }
+  if (loaded.format === "pairs") return "Key list";
+  if (loaded.format === "binary") {
+    if (loaded.encrypted) return "Encrypted";
+    if (loaded.binaryHits?.length) return "Binary (scanned)";
+    return "Binary";
+  }
   return "Plain text";
+}
+
+function bytesToB64(bytes: Uint8Array): string {
+  let bin = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(bin);
+}
+
+function b64ToBytes(value: string): Uint8Array {
+  const bin = atob(value);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+function loadStored(file: { name: string; text: string; format: string }): Loaded {
+  if (file.format === "binary") {
+    try {
+      return parseBytes(file.name, b64ToBytes(file.text));
+    } catch {
+      /* fall through */
+    }
+  }
+  return parseText(file.name, file.text);
+}
+
+function downloadBytes(name: string, bytes: Uint8Array) {
+  const blob = new Blob([bytes], { type: "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function downloadText(name: string, text: string) {
