@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Fraunces", Georgia, serif;
+  --font-sans: "Outfit", system-ui, sans-serif;
+  --color-ink: #1c1915;
+  --color-paper: #f3efe6;
+  --color-card: #fffdf8;
+  --color-line: #e0d8cb;
+  --color-muted: #6f675c;
+  --color-copper: #b85a2a;
+  --color-copper-ink: #fff7f2;
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    font-family: var(--font-sans);
+    background: var(--color-paper);
+    color: var(--color-ink);
+    line-height: 1.5;
+  }
+  h1,
+  h2 {
+    font-family: var(--font-display);
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled),
+  [role="switch"]:not(:disabled) {
+    cursor: pointer;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-copper);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-copper px-4 font-medium text-copper-ink transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40;
+  }
+  .btn-ghost {
+    @apply inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-line bg-card px-4 font-medium text-ink;
+  }
+  .btn-quiet {
+    @apply inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl px-4 font-medium text-ink;
+  }
+  .card {
+    @apply rounded-2xl border border-line bg-card p-4;
+  }
+  .field {
+    @apply min-h-12 rounded-2xl border border-line bg-paper px-3 text-ink;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
