@@ -20,6 +20,7 @@ import {
   fieldLabel,
   friendlyFileKey,
   relaxJson,
+  isNrbf,
 } from "./engine.ts";
 
 const STAMP = {
@@ -556,5 +557,25 @@ describe("real-save formats and friendly labels", () => {
     assert.ok(money.some((l) => l.value === 1916));
     assert.ok(!money.some((l) => l.value === 4768));
     assert.ok(money.some((l) => fieldLabel(l) === "Wallet" || /wallet/i.test(l.path)));
+  });
+});
+
+
+describe("Unity BinaryFormatter saves", () => {
+  it("reads Splendid Match coins, lives and boosters when the pulled save is present", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const { pathToFileURL } = await import("node:url");
+    const file = "/workspace/savepress/phone-saves/com.drava.match.splendid/files/save";
+    let bytes: Uint8Array;
+    try {
+      bytes = new Uint8Array(await readFile(file));
+    } catch {
+      return;
+    }
+    assert.equal(isNrbf(bytes), true);
+    const loaded = parseBytes("save", bytes);
+    const money = collect(loaded.data).leaves.filter((l) => l.role === "money");
+    assert.ok(money.some((l) => fieldLabel(l) === "Coins" && l.value === 40), JSON.stringify(money.map((l) => [fieldLabel(l), l.value])));
+    assert.ok(money.some((l) => fieldLabel(l) === "Lives" && l.value === 5), "lives");
   });
 });

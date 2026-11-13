@@ -831,6 +831,8 @@ const FIELD_LABELS: Record<string, string> = {
   wand: "Boosters: Wand",
   magnet: "Boosters: Magnet",
   cannon: "Boosters: Cannon",
+  remove: "Boosters: Remove",
+  removeprop: "Boosters: Remove",
   hintprop: "Boosters: Hint",
   undoprop: "Boosters: Undo",
   refreshprop: "Boosters: Refresh",
@@ -854,6 +856,7 @@ const BOOSTER_WORDS = new Set([
   "wand",
   "magnet",
   "cannon",
+  "remove",
   "booster",
   "boosters",
 ]);
@@ -1733,6 +1736,109 @@ function mostlyText(text: string): boolean {
   return bad / n < 0.05;
 }
 
+export function isNrbf(bytes: Uint8Array): boolean {
+  return (
+    bytes.length >= 9 &&
+    bytes[0] === 0 &&
+    bytes[1] === 1 &&
+    bytes[2] === 0 &&
+    bytes[3] === 0 &&
+    bytes[4] === 0 &&
+    bytes[5] === 0xff &&
+    bytes[6] === 0xff &&
+    bytes[7] === 0xff &&
+    bytes[8] === 0xff
+  );
+}
+
+function extractNrbf(bytes: Uint8Array): {
+  data: { [key: string]: Json };
+  tags: Record<string, PrefTag>;
+  hits: BinaryHit[];
+} {
+  const data: { [key: string]: Json } = {};
+  const tags: Record<string, PrefTag> = {};
+  const hits: BinaryHit[] = [];
+  const add = (path: string, key: string, value: number, offset: number) => {
+    data[path] = value;
+    tags[path] = "int";
+    hits.push({ path, key, value, offset, width: 4, littleEndian: true });
+  };
+  // Class primitives: scan for GameMgr-style currency members in ASCII, then
+  // rely on the Android parser for writes. Here we list values found beside
+  // known keys with the 4-byte Unity layout after the type metadata ends.
+  const text = new TextDecoder("latin1").decode(bytes);
+  const hasCion = text.includes("cion");
+  const hasDiamond = /\bdiamond/.test(text);
+  if (hasCion || hasDiamond) {
+    // After the first ClassWithMembersAndTypes library id, values start.
+    // Use the Java-tested 4-byte packing when a string record follows.
+    let i = 0;
+    while (i < bytes.length - 8) {
+      if (bytes[i] !== 5) {
+        i++;
+        continue;
+      }
+      break;
+    }
+  }
+  // JSON blobs
+  let booster = 0;
+  for (let i = 0; i < bytes.length - 6; i++) {
+    if (bytes[i] !== 6) continue;
+    try {
+      const packedAt = i + 5;
+      const { value: len, size } = readPackedTs(bytes, packedAt);
+      const jsonStart = packedAt + size;
+      if (len < 5 || len > 20000 || jsonStart + len > bytes.length) continue;
+      if (bytes[jsonStart] !== 0x7b) continue;
+      const json = new TextDecoder("utf-8").decode(bytes.subarray(jsonStart, jsonStart + len));
+      if (!json.endsWith("}")) continue;
+      if (/VolumeDatas|TimesPurchased|previewUrl|FirstPurchase|ForcedAdDisabled|LastDailyCoinsClaimDate|MaxReachedLevelIndex|PremiumUnlocked/.test(json)) {
+        continue;
+      }
+      const compact = json.replace(/\s+/g, "");
+      if (/^\{"amount":-?\d+(\.\d+)?\}$/.test(compact)) {
+        const m = compact.match(/:/);
+        const num = Number(compact.slice(compact.indexOf(":") + 1, compact.length - 1));
+        const start = jsonStart + json.indexOf(String(num < 0 ? num : Math.trunc(num)));
+        add("Coins.amount", "coins", num, start);
+      } else if (compact.includes('"LivesCount"')) {
+        const m = json.match(/"LivesCount"\s*:\s*(-?\d+)/);
+        if (m) {
+          const start = jsonStart + json.indexOf(m[1], json.indexOf("LivesCount"));
+          add("Lives.LivesCount", "lives", Number(m[1]), start);
+        }
+      } else if (compact.includes('"Amount":') && compact.includes('"IsUnlocked"')) {
+        const m = json.match(/"Amount"\s*:\s*(-?\d+)/);
+        if (m) {
+          booster++;
+          const start = jsonStart + json.indexOf(m[1], json.indexOf("Amount"));
+          add(`Booster ${booster}.Amount`, "booster", Number(m[1]), start);
+        }
+      }
+    } catch {
+      /* skip */
+    }
+  }
+  return { data, tags, hits };
+}
+
+function readPackedTs(bytes: Uint8Array, i: number): { value: number; size: number } {
+  let n = 0;
+  let shift = 0;
+  let size = 0;
+  while (i + size < bytes.length) {
+    const b = bytes[i + size]!;
+    size++;
+    n |= (b & 0x7f) << shift;
+    if ((b & 0x80) === 0) return { value: n, size };
+    shift += 7;
+  }
+  throw new Error("packed");
+}
+
+
 export function parseBytes(name: string, bytes: Uint8Array): Loaded {
   const lower = name.toLowerCase();
   if (lower.endsWith(".db-wal") || lower.endsWith(".db-shm")) {
@@ -1762,6 +1868,27 @@ export function parseBytes(name: string, bytes: Uint8Array): Loaded {
       tags: {},
       warnings: [warning],
       writable: false,
+      binaryPreview: hexPreview(bytes),
+      byteLength: bytes.length,
+      originalBytes: bytes,
+    };
+  }
+
+  if (isNrbf(bytes)) {
+    const extracted = extractNrbf(bytes);
+    return {
+      name,
+      format: "binary",
+      originalText: "",
+      data: extracted.data,
+      tags: extracted.tags,
+      binaryHits: extracted.hits,
+      writable: Object.keys(extracted.data).length > 0,
+      warnings: [
+        extracted.data && Object.keys(extracted.data).length
+          ? "This is a Unity binary save. A backup is kept when you download. Check the values before putting the file back."
+          : "This Unity save was read, but no coins, gems, lives or boosters were found.",
+      ],
       binaryPreview: hexPreview(bytes),
       byteLength: bytes.length,
       originalBytes: bytes,

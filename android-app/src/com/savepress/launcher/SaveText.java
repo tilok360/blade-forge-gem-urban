@@ -33,7 +33,7 @@ public final class SaveText {
             "star", "stars", "ticket", "tickets", "key", "keys", "heart", "hearts",
             "life", "lives", "energy", "stamina", "point", "points", "score", "sc", "hc",
             "flower", "flowers", "hint", "undo", "refresh", "shuffle", "shuffer", "brush",
-            "boom", "bomb", "hammer", "wand", "magnet", "cannon", "tip", "booster", "boosters");
+            "boom", "bomb", "hammer", "wand", "magnet", "cannon", "tip", "remove", "booster", "boosters");
     private static final Set<String> MONEY_PARENT = set(
             "wallet", "purse", "bank", "currency", "currencies", "money", "cash", "coins", "coin",
             "gold", "gems", "gem", "credits", "credit", "treasury", "funds", "tickets", "keys",
@@ -86,6 +86,9 @@ public final class SaveText {
         public String valueType;
         Blob blob;
         int binaryOffset = -1;
+        int packedAt = -1;
+        int jsonStart = -1;
+        int jsonEnd = -1;
 
         Field(String path, String key, String role, boolean lockOff, String literal, int start, int end) {
             this.path = path;
@@ -177,6 +180,9 @@ public final class SaveText {
         }
 
         public byte[] renderBytes() {
+            if (originalBytes != null && "nrbf".equals(format)) {
+                return Nrbf.render(originalBytes, fields);
+            }
             if (originalBytes != null && "binary".equals(format)) {
                 byte[] next = new byte[originalBytes.length];
                 System.arraycopy(originalBytes, 0, next, 0, originalBytes.length);
@@ -191,11 +197,19 @@ public final class SaveText {
                     if (value > SAFE_MONEY) value = SAFE_MONEY;
                     if (value < 0) value = 0;
                     if (field.binaryOffset + 4 <= next.length) {
-                        int v = (int) value;
-                        next[field.binaryOffset] = (byte) (v & 0xff);
-                        next[field.binaryOffset + 1] = (byte) ((v >> 8) & 0xff);
-                        next[field.binaryOffset + 2] = (byte) ((v >> 16) & 0xff);
-                        next[field.binaryOffset + 3] = (byte) ((v >> 24) & 0xff);
+                        if ("float".equals(field.valueType)) {
+                            int bits = Float.floatToIntBits((float) value);
+                            next[field.binaryOffset] = (byte) (bits & 0xff);
+                            next[field.binaryOffset + 1] = (byte) ((bits >> 8) & 0xff);
+                            next[field.binaryOffset + 2] = (byte) ((bits >> 16) & 0xff);
+                            next[field.binaryOffset + 3] = (byte) ((bits >> 24) & 0xff);
+                        } else {
+                            int v = (int) value;
+                            next[field.binaryOffset] = (byte) (v & 0xff);
+                            next[field.binaryOffset + 1] = (byte) ((v >> 8) & 0xff);
+                            next[field.binaryOffset + 2] = (byte) ((v >> 16) & 0xff);
+                            next[field.binaryOffset + 3] = (byte) ((v >> 24) & 0xff);
+                        }
                     }
                 }
                 return next;
@@ -1076,6 +1090,7 @@ public final class SaveText {
         if (compact.equals("wand")) return "Boosters: Wand";
         if (compact.equals("magnet")) return "Boosters: Magnet";
         if (compact.equals("cannon")) return "Boosters: Cannon";
+        if (compact.equals("remove") || compact.equals("removeprop")) return "Boosters: Remove";
         if ("offlinecoins".equals(compact)) return "Offline Coins";
         if ("dailycoins".equals(compact)) return "Daily Coins";
         for (String token : tokens(raw)) {
@@ -1101,6 +1116,7 @@ public final class SaveText {
         if ("undo".equals(token)) return "Boosters: Undo";
         if ("shuffle".equals(token)) return "Boosters: Shuffle";
         if ("brush".equals(token)) return "Boosters: Brush";
+        if ("remove".equals(token)) return "Boosters: Remove";
         return null;
     }
 
@@ -1293,6 +1309,15 @@ public final class SaveText {
         return bad / (double) n < 0.05;
     }
 
+    static List<Field> parseJsonFields(String text) {
+        List<Field> fields = new ArrayList<Field>();
+        if (text == null) return fields;
+        List<Blob> blobs = new ArrayList<Blob>();
+        Parser parser = new Parser(text, fields, blobs);
+        if (!parser.parse()) return new ArrayList<Field>();
+        return fields;
+    }
+
     public static Doc parseBytes(byte[] bytes) {
         return parseBytes(bytes, null);
     }
@@ -1312,6 +1337,14 @@ public final class SaveText {
             List<Field> fields = extractSqlite(bytes);
             applyWarnings(fields);
             return new Doc("binary", "", fields, new ArrayList<Blob>(), warning, false, false, bytes);
+        }
+        if (Nrbf.isNrbf(bytes)) {
+            List<Field> nrbf = Nrbf.parse(bytes);
+            applyWarnings(nrbf);
+            String warning = nrbf.isEmpty()
+                    ? "This Unity save was read, but no coins, gems, lives or boosters were found."
+                    : "This is a Unity binary save. A backup is kept when you save. Check the values before putting the file back.";
+            return new Doc("nrbf", "", nrbf, new ArrayList<Blob>(), warning, !nrbf.isEmpty(), false, bytes);
         }
         boolean encrypted = looksEncrypted(bytes);
         if (!encrypted) {

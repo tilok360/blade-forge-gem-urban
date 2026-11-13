@@ -259,8 +259,99 @@ public class SaveTextTest {
         SaveText.Doc unsure = SaveText.parse("{\"day\":3}");
         check(SaveText.fieldLabel(unsure.fields.get(0)).contains("(unsure)"), "unsure label");
 
+        {
+        java.io.File charm = new java.io.File("/workspace/savepress/phone-saves/com.charmcolor.sortpuzzle/files/Gamedata.txt");
+        if (charm.isFile()) {
+            byte[] bytes = java.nio.file.Files.readAllBytes(charm.toPath());
+            check(Nrbf.isNrbf(bytes), "charm is nrbf");
+            SaveText.Doc nrbfDoc = SaveText.parseBytes(bytes, "Gamedata.txt");
+            check(nrbfDoc != null && "nrbf".equals(nrbfDoc.format), "charm format " + (nrbfDoc == null ? "null" : nrbfDoc.format));
+            boolean gotCoins = false, gotDiamonds = false, gotHint = false;
+            for (SaveText.Field f : nrbfDoc.fields) {
+                String label = SaveText.fieldLabel(f);
+                if (label.equals("Coins") && "50".equals(f.literal)) gotCoins = true;
+                if (label.equals("Diamonds") && "0".equals(f.literal)) gotDiamonds = true;
+                if (label.equals("Boosters: Hint")) gotHint = true;
+            }
+            check(gotCoins, "charm coins 50, got labels " + labelsOf(nrbfDoc));
+            check(gotDiamonds, "charm diamonds 0");
+            check(gotHint, "charm hint booster");
+            SaveText.stamp(nrbfDoc, 9999, 10);
+            byte[] written = nrbfDoc.renderBytes();
+            SaveText.Doc nrbfAgain = SaveText.parseBytes(written, "Gamedata.txt");
+            boolean gotStamped = false;
+            for (SaveText.Field f : nrbfAgain.fields) {
+                if (SaveText.fieldLabel(f).equals("Coins") && "9999".equals(f.literal)) gotStamped = true;
+            }
+            check(gotStamped, "charm coins stamped in rewritten file, got " + labelsOf(nrbfAgain));
+        }
+        }
+
+        {
+        java.io.File island = new java.io.File("/workspace/savepress/phone-saves/com.islandmatch.tripletilegp/files/Gamedata.txt");
+        if (island.isFile()) {
+            SaveText.Doc nrbfDoc = SaveText.parseBytes(java.nio.file.Files.readAllBytes(island.toPath()), "Gamedata.txt");
+            boolean gotCoins = false, gotRemove = false;
+            for (SaveText.Field f : nrbfDoc.fields) {
+                if (SaveText.fieldLabel(f).equals("Coins") && "20".equals(f.literal)) gotCoins = true;
+                if (SaveText.fieldLabel(f).equals("Boosters: Remove")) gotRemove = true;
+            }
+            check(gotCoins, "island coins 20, got " + labelsOf(nrbfDoc));
+            check(gotRemove, "island remove booster, got " + labelsOf(nrbfDoc));
+        }
+        }
+
+        {
+        java.io.File splendid = new java.io.File("/workspace/savepress/phone-saves/com.drava.match.splendid/files/save");
+        if (splendid.isFile()) {
+            SaveText.Doc nrbfDoc = SaveText.parseBytes(java.nio.file.Files.readAllBytes(splendid.toPath()), "save");
+            boolean gotCoins = false, gotLives = false, gotBooster = false;
+            for (SaveText.Field f : nrbfDoc.fields) {
+                String label = SaveText.fieldLabel(f);
+                if (label.equals("Coins") && "40".equals(f.literal)) gotCoins = true;
+                if (label.equals("Lives") && "5".equals(f.literal)) gotLives = true;
+                if (label.startsWith("Booster") && "3".equals(f.literal)) gotBooster = true;
+            }
+            check(gotCoins, "splendid coins 40, got " + labelsOf(nrbfDoc));
+            check(gotLives, "splendid lives 5, got " + labelsOf(nrbfDoc));
+            check(gotBooster, "splendid booster 3, got " + labelsOf(nrbfDoc));
+            SaveText.stamp(nrbfDoc, 123456, 10);
+            byte[] written = nrbfDoc.renderBytes();
+            check(Nrbf.isNrbf(written), "splendid rewrite stays nrbf");
+            SaveText.Doc nrbfAgain = SaveText.parseBytes(written, "save");
+            boolean gotStamped = false, gotLivesStamped = false;
+            for (SaveText.Field f : nrbfAgain.fields) {
+                if (SaveText.fieldLabel(f).equals("Coins") && "123456".equals(f.literal)) gotStamped = true;
+                if (SaveText.fieldLabel(f).equals("Lives") && "123456".equals(f.literal)) gotLivesStamped = true;
+            }
+            check(gotStamped, "splendid coins stamped to 123456, got " + labelsOf(nrbfAgain));
+            check(gotLivesStamped, "splendid lives stamped, got " + labelsOf(nrbfAgain));
+        }
+        }
+
+        {
+        java.io.File luxe = new java.io.File("/workspace/savepress/phone-saves/com.drava.puzzle.luxe/files/save");
+        if (luxe.isFile()) {
+            SaveText.Doc nrbfDoc = SaveText.parseBytes(java.nio.file.Files.readAllBytes(luxe.toPath()), "save");
+            boolean gotCoins = false;
+            for (SaveText.Field f : nrbfDoc.fields) {
+                if (SaveText.fieldLabel(f).equals("Coins") && "20".equals(f.literal)) gotCoins = true;
+            }
+            check(gotCoins, "luxe coins 20, got " + labelsOf(nrbfDoc));
+        }
+        }
+
         System.out.println("ok");
 
+    }
+
+    private static String labelsOf(SaveText.Doc doc) {
+        StringBuilder out = new StringBuilder();
+        for (SaveText.Field f : doc.fields) {
+            if (out.length() > 0) out.append(", ");
+            out.append(SaveText.fieldLabel(f)).append("=").append(f.literal);
+        }
+        return out.toString();
     }
 
     private static void check(boolean ok, String message) {

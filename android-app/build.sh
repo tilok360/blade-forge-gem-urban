@@ -23,6 +23,7 @@ mkdir -p "$OUT/classes" "$OUT/gen" "$OUT/host" "$DEPS" "$OUT/res"
 
 javac --release 11 -d "$OUT/host" \
   "$ROOT/src/com/savepress/launcher/SaveText.java" \
+  "$ROOT/src/com/savepress/launcher/Nrbf.java" \
   "$ROOT/src/com/savepress/launcher/Codec.java" \
   "$ROOT/src/com/savepress/launcher/BulldozerText.java" \
   "$ROOT/src/com/savepress/launcher/SaveTextTest.java"
@@ -50,8 +51,8 @@ fi
   --manifest "$ROOT/AndroidManifest.xml" \
   --min-sdk-version 26 \
   --target-sdk-version 34 \
-  --version-code 16 \
-  --version-name 2.5 \
+  --version-code 17 \
+  --version-name 2.6 \
   --java "$OUT/gen" \
   -o "$OUT/base.apk" \
   "$OUT/res.zip"
